@@ -1,6 +1,6 @@
 CC      = gcc -g -Wall -DDEBUG
 INCDIR  = ../../src -I../../../../src/include/ -I../../
-OBJECTS = main.o
+OBJECTS = main.o network.o
 
 all: h264streamer.duda
 

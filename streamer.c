@@ -6,6 +6,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
 
 #include "network.h"
 #include "streamer.h"
@@ -88,4 +94,64 @@ int streamer_pipe_init(int pipefd[2])
     }
 
     return 0;
+}
+
+void *streamer_worker(void *arg)
+{
+    int bytes;
+    int remote_fd;
+    int server_fd = (int ) arg;
+    int size = 250000;
+    char buf[size];
+
+    struct sockaddr_un address;
+    socklen_t socket_size = sizeof(struct sockaddr_un);
+
+    while (1) {
+        remote_fd = accept(server_fd, (struct sockaddr *) &address, &socket_size);
+        printf("new connection: %i\n", remote_fd);
+
+        while (1) {
+            memset(buf, '\0', sizeof(buf));
+            bytes = read(stream_pipe[0], buf, sizeof(buf));
+            if (bytes > 0) {
+                send(remote_fd, buf, bytes, 0);
+            }
+            else if (bytes == -1) {
+                break;
+            }
+            int n;
+            n = send(remote_fd, buf, bytes, 0);
+        }
+
+        close(remote_fd);
+    }
+}
+
+int streamer_loop(int server_fd)
+{
+    pthread_t tid;
+    pthread_attr_t thread_attr;
+
+    pthread_attr_init(&thread_attr);
+    pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&tid, &thread_attr,
+                       streamer_worker, (void *) server_fd) < 0) {
+        perror("pthread_create");
+        exit(EXIT_FAILURE);
+    }
+
+    return 0;
+}
+
+/* write data to unix socket */
+int streamer_write(const void *buf, size_t count)
+{
+    return write(stream_pipe[1], buf, count);
+}
+
+int streamer_write_nal()
+{
+    uint8_t nal_header[4] = {0x00, 0x00, 0x00, 0x01};
+    return write(stream_pipe[1], &nal_header, sizeof(nal_header));
 }

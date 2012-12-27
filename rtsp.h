@@ -35,7 +35,7 @@ struct rtsp_session {
 
 //#define CMD_SETUP         "SETUP %s/trackID=1 RTSP/1.0\r\nCSeq: %i\r\nTransport: RTP/AVP;unicast;client_port=%i-%i\r\n\r\n"
 
-#define CMD_SETUP         "SETUP %s/trackID=1 RTSP/1.0\r\nCSeq: %i\r\nTransport: RTP/AVP/TCP;interleaved=0-1\r\n\r\n"
+#define CMD_SETUP         "SETUP %s/trackID=1 RTSP/1.0\r\nCSeq: %i\r\nTransport: RTP/AVP/TCP;interleaved=0-1;\r\n\r\n"
 
 
 

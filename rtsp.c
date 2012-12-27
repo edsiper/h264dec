@@ -29,14 +29,13 @@
 #include "base64.h"
 #include "rtsp.h"
 #include "utils.h"
+#include "rtcp.h"
 #include "rtp.h"
 
 /* global variables */
 int rtsp_cseq;
 int client_port;
 int opt_verbose;
-int stream_sock;
-int stream_pipe[2];
 char *opt_stream;
 char *opt_name;
 char *stream_host;
@@ -250,7 +249,7 @@ int rtsp_cmd_setup(int sock, char *stream, struct rtsp_session *session)
          * ports to connect.
          *
          * By now the program is using TCP in Intervealed mode, so no
-         * extra channels are required.
+         * extra ports are required.
 
         buf_client_port = strstr(p, SETUP_TRNS_CLIENT);
         buf_server_port = strstr(p, SETUP_TRNS_SERVER);
@@ -613,6 +612,10 @@ int main(int argc, char **argv)
 
      /* Local pipe */
      streamer_pipe_init(stream_pipe);
+     streamer_loop(stream_sock);
+
+     printf("Streaming will start in 5 seconds...\n");
+     //sleep(5);
 
      while (1) {
          raw_offset = 0;
@@ -632,7 +635,7 @@ int main(int argc, char **argv)
                  memcpy(raw_tmp, raw + raw_offset, bytes);
 
                  memset(raw, '\0', sizeof(raw));
-                memcpy(raw, raw_tmp, bytes);
+                 memcpy(raw, raw_tmp, bytes);
 
                 printf("   Move:  %i\n", raw_length - raw_offset);
                 raw_length = bytes;
@@ -648,13 +651,14 @@ int main(int argc, char **argv)
                 memset(raw, '\0', sizeof(raw));
             }
             //exit(0);
-        }
+         }
 
-        /* read incoming data */
-        r = recv(fd, raw + raw_length, max_buf_size - raw_length, 0);
-        printf(">> READ: %i (up to %i)\n", r, max_buf_size - raw_length);
+         /* read incoming data */
+         printf("TRYING TO READ %i\n", max_buf_size - raw_length);
+         r = recv(fd, raw + raw_length, max_buf_size - raw_length, MSG_WAITALL);
+         printf(">> READ: %i (up to %i)\n", r, max_buf_size - raw_length);
 
-        if (r <= 0) {
+         if (r <= 0) {
             printf("READ IS ZERO!");
             perror("recv");
             continue;
@@ -690,6 +694,114 @@ int main(int argc, char **argv)
 
                 /* RTCP data */
                 if (channel >= 1) {
+                    /* parse RTCP :/ */
+                    struct rtcp_pkg rtcp;
+
+                    rtcp.version   = (raw[raw_offset] >> 6);
+                    rtcp.padding   = (raw[raw_offset] & 0x20) >> 5;
+                    rtcp.extension = (raw[raw_offset] & 0x10) >> 4;
+                    rtcp.ccrc      = (raw[raw_offset] & 0xF);
+                    rtcp.type      = (raw[raw_offset + 1]);
+                    rtcp.length    = (raw[raw_offset + 2] * 256 +
+                                      raw[raw_offset + 3]);
+
+                    rtcp.ssrc      = (
+                                      (raw[raw_offset + 7]) |
+                                      (raw[raw_offset + 6] <<  8) |
+                                      (raw[raw_offset + 5] << 16) |
+                                      (raw[raw_offset + 4] << 24)
+                                      );
+
+                    rtcp.ts_msw    =  (
+                                       (raw[raw_offset + 11]) |
+                                       (raw[raw_offset + 10] <<  8) |
+                                       (raw[raw_offset + 9] << 16) |
+                                       (raw[raw_offset + 8] << 24)
+                                       );
+
+                    rtcp.ts_lsw    =  (
+                                       (raw[raw_offset + 15]) |
+                                       (raw[raw_offset + 14] <<  8) |
+                                       (raw[raw_offset + 13] << 16) |
+                                       (raw[raw_offset + 12] << 24)
+                                       );
+
+                    printf("RTCP Version  : %i\n", rtcp.version);
+                    printf("     Padding  : %i\n", rtcp.padding);
+                    printf("     Extension: %i\n", rtcp.extension);
+                    printf("     CCRC     : %i\n", rtcp.ccrc);
+                    printf("     Type     : %i\n", rtcp.type);
+                    printf("     Length   : %i\n", rtcp.length);
+                    printf("     SSRC     : 0x%x (%u)\n", rtcp.ssrc, rtcp.ssrc);
+                    printf("     TS MSW   : 0x%x (%u)\n",
+                           rtcp.ts_msw, rtcp.ts_msw);
+                    printf("     TS LSW   : 0x%x (%u)\n",
+                           rtcp.ts_lsw, rtcp.ts_lsw);
+
+                    if (rtcp.type == RTCP_SR) {
+                        uint8_t  tmp_8;
+                        uint16_t tmp_16;
+                        uint32_t tmp_32;
+
+                        /* RTSP Header, we are in interleaved mode */
+                        tmp_8 = 0x24;
+                        write(fd, &tmp_8, 1);
+
+                        /* RTSP Channel */
+                        tmp_8 = 0x01;
+                        write(fd, &tmp_8, 1);
+
+                        /* RTSP Length */
+                        tmp_16 = 0x20; //0x34 (8 bytes);
+                        write(fd, &tmp_16, 2);
+
+                        /* ---- RTCP frame ---- */
+
+                        /* first header, int = 128, original 129 ? */
+                        tmp_8 = 0x80;
+                        write(fd, &tmp_8, 1);
+
+                        /* packet type */
+                        tmp_8 = RTCP_RR;
+                        write(fd, &tmp_8, 1);
+
+                        /* length = 7 bytes */
+                        tmp_16 = 0x07;
+                        write(fd, &tmp_16, 2);
+
+                        /* sender ssrc */
+                        tmp_32 = 0x0c143e07;  /* my ID */
+                        write(fd, &tmp_32, 4);
+
+                        /* Source 1: identifier */
+                        write(fd, &rtcp.ssrc, 4);
+
+
+                        /* Source 1: Fraction Lost + Cump num packages */
+                        tmp_32 = 0;
+                        write(fd, &tmp_32, 4);
+
+                        /* Source 1: Extended highest sequence number */
+                        tmp_32 = 0;
+                        write(fd, &tmp_32, 4);
+
+                        /* Source 1: Iterrarival jetter */
+                        tmp_32 = 0;
+                        write(fd, &tmp_32, 4);
+
+                        /* Source 1: Last Sender Report timestamp */
+                        write(fd, &rtcp.ts_msw, 4);
+
+                        /* Source 1: Delay since last timestamp */
+                        tmp_32 = 138319;
+                        write(fd, &tmp_32, 4);
+                    }
+                    else {
+                        printf("RTCP CODE = %i\n", rtcp.type);
+                        exit(1);
+                    }
+                    //exit(0);
+
                     /*
                      * We are not interested into RTCP information, so
                      * we just move the offset and continue processing
@@ -698,8 +810,9 @@ int main(int argc, char **argv)
                      * I found sometimes channel id > 1 and per protocol
                      * spec that is wrong, lets just skipe this buffer.
                      */
+                    printf("CHANNEL 1\n");
                     raw_offset += rtp_length;
-                    continue;
+                    continue;        printf("print chunk ret = %i\n", r);
                 }
 
                 if (rtp_length == 0) {
@@ -798,9 +911,11 @@ int main(int argc, char **argv)
 
                     /* Write NAL header */
                     write(data, nal_header, sizeof(nal_header));
+                    streamer_write_nal();
 
                     /* Write NAL unit */
                     write(data, payload, paysize);
+                    streamer_write(payload, sizeof(paysize));
                 }
                 /* Aggregation packet */
                 else if (nal_type == NAL_TYPE_STAP_A) {
@@ -815,12 +930,16 @@ int main(int argc, char **argv)
 
                     while (q < q_end && p < p_end) {
                         write(data, nal_header, sizeof(nal_header));
+                        streamer_write_nal();
 
                         tmp_nal_size = (*q << 8) | *(q + 1);
-                        printf("tmp_nal_size=%i cmp %i\n", tmp_nal_size, (*q << 8) | *(q + 1));
+                        printf("tmp_nal_size=%i cmp %i\n",
+                               tmp_nal_size,
+                               (*q << 8) | *(q + 1));
                         q += 2;
 
                         write(data, q, tmp_nal_size);
+                        streamer_write(q, tmp_nal_size);
                         q += tmp_nal_size;
                     }
                 }
@@ -840,17 +959,18 @@ int main(int argc, char **argv)
                     if (h264_start_bit) {
                         /* write NAL header */
                         write(data, &nal_header, sizeof(nal_header));
+                        streamer_write_nal();
 
                         /* write NAL unit code */
                         write(data, &h264_key, sizeof(h264_key));
+                        streamer_write(&h264_key, sizeof(h264_key));
                     }
 
                     n = write(data, q + 2, paysize - 2);
+                    streamer_write(q + 2, paysize - 2);
 
                     if (h264_end_bit) {
-                        /* write NAL header */
-                        //write(data, &nal_header, sizeof(nal_header));
-                        //write(data, &h264_key, sizeof(h264_key));
+                        /* nothing to do... */
                     }
 
                     printf("            Wrote: %i, start bit: %i  end bit: %i\n",

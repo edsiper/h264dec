@@ -1,12 +1,17 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 
 /* headers required by common glibc calls */
+#include <sys/stat.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <fcntl.h>
+
 
 /* Duda headers and definition */
 #include "webservice.h"
 #include "channels.h"
+#include "network.h"
 #include "html.h"
 
 DUDA_REGISTER("Duda HTTP Service", "H264 Streamer");
@@ -76,10 +81,18 @@ void cb_list(duda_request_t *dr)
 void cb_play(duda_request_t *dr)
 {
     int s;
+    int fd;
+    int len;
+    int size = 64;
+    int chunk_len;
+    int raw_size = 65536;
+    char raw[raw_size];
+    char *h264_header;
     char *channel;
     char *file_sock;
     char *file_meta;
-
+    char chunk[size];
+    struct stat st;
     const char *base_url = "/h264streamer/play/";
 
     /*
@@ -97,36 +110,98 @@ void cb_play(duda_request_t *dr)
     strncpy(channel, dr->sr->uri.data + strlen(base_url), s);
     channel[s] = '\0';
 
-    printf("channel = '%s'\n", channel);
-
-    /* file paths */
+    /* file sock */
     s = strlen(CH_ROOT) + strlen(CH_SOCK) + strlen(channel) + 1;
     file_sock = malloc(s);
     snprintf(file_sock, s, "%s%s%s", CH_ROOT, channel, CH_SOCK);
 
-    printf("file sock: '%s'\n", file_sock);
-
+    /* file meta */
     file_meta = malloc(s);
     snprintf(file_meta, s, "%s%s%s", CH_ROOT, channel, CH_META);
 
-    printf("file meta: '%s'\n", file_meta);
+    /* validate meta data file */
+    if (stat(file_meta, &st) != 0) {
+        response->http_status(dr, 400);
+        response->printf(dr, "Invalid channel");
+        response->end(dr, NULL);
+    }
 
-    /* Fixme, duda is sending the content length header anyways */
-    dr->sr->headers.content_length = -1;
+    /* read meta header */
+    h264_header = malloc(st.st_size);
+    fd = open(file_meta, O_RDONLY);
+    read(fd, h264_header, st.st_size);
+    close(fd);
 
-    /* send H264 content type header */
-    response->http_header(dr, HTTP_CONTENT_TYPE_H264);
-
-    /* set HTTP chunked transfer encoding */
-    response->http_header(dr, HTTP_CHUNKED_TE);
-
+    /* response headers */
     response->http_status(dr, 200);
-    response->end(dr, NULL);
+    response->http_content_length(dr, -1);
+    response->http_header(dr, HTTP_CONTENT_TYPE_H264);
+    response->http_header(dr, HTTP_CHUNKED_TE);
+    response->send_headers(dr);
+
+    /* meta */
+    len = snprintf(chunk, size, "%X\r\n", (int) st.st_size);
+    response->print(dr, chunk, len);
+    response->print(dr, h264_header, st.st_size);
+
+    //send(dr->cs->socket, chunk, len, 0);
+    //send(dr->cs->socket, h264_header, st.st_size, 0);
+
+    /* Connect to the decoded h264 video stream */
+    int stream = -1;
+    while (stream == -1) {
+        stream = network_connect(file_sock);
+    }
+
+    printf("Connected to stream...\n");
+    while (1) {
+        memset(raw, '\0', sizeof(raw));
+        len = recv(stream, raw, raw_size, 0);
+        if (len == -1) {
+            sleep(0.2);
+            continue;
+        }
+        printf("recv=%i\n", len);
+
+        chunk_len = snprintf(chunk, size, "%X\r\n", len);
+
+        response->print(dr, chunk, chunk_len);
+        response->print(dr, raw, len);
+        response->flush(dr);
+        continue;
+
+        int r;
+
+        r = send(dr->cs->socket, chunk, chunk_len, 0);
+        printf("print chunk ret = %i\n", r);
+        if (r == -1) {
+            perror("send");
+        }
+
+        r = send(dr->cs->socket, raw, len, 0);
+        printf("print raw   ret = %i\n", r);
+        if (r == -1) {
+            perror("send");
+        }
+
+        continue;
+
+
+        r = response->print(dr, chunk, chunk_len);
+        printf("print chunk ret = %i\n", r);
+
+
+        r = response->print(dr, raw, len);
+        printf("print chunk ret = %i\n", r);
+        len = response->flush(dr);
+        printf(" BYTES SENT: %i\n", len);
+    }
+    //response->end(dr, NULL);
 }
 
 int duda_main()
 {
-    map->static_add("/channels", "cb_list");
+    map->static_add("/channels/", "cb_list");
     map->static_add("/play", "cb_play");
 
     return 0;
