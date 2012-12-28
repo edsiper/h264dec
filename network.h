@@ -6,5 +6,6 @@
 int net_tcp_connect(char *host, unsigned long port);
 int net_udp_connect(char *host, unsigned long port);
 int net_unix_sock(const char *path);
+int net_sock_nonblock(int sockfd);
 
 #endif

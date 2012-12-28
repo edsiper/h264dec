@@ -16,13 +16,6 @@
 
 DUDA_REGISTER("Duda HTTP Service", "H264 Streamer");
 
-void cb_main(duda_request_t *dr)
-{
-    response->http_status(dr, 200);
-    response->printf(dr, "Hello World!");
-    response->end(dr, NULL);
-}
-
 /* List channels available */
 void cb_list(duda_request_t *dr)
 {
@@ -85,7 +78,7 @@ void cb_play(duda_request_t *dr)
     int len;
     int size = 64;
     int chunk_len;
-    int raw_size = 65536;
+    int raw_size = 65536*4;
     char raw[raw_size];
     char *h264_header;
     char *channel;
@@ -143,6 +136,7 @@ void cb_play(duda_request_t *dr)
     len = snprintf(chunk, size, "%X\r\n", (int) st.st_size);
     response->print(dr, chunk, len);
     response->print(dr, h264_header, st.st_size);
+    response->flush(dr);
 
     //send(dr->cs->socket, chunk, len, 0);
     //send(dr->cs->socket, h264_header, st.st_size, 0);
@@ -165,11 +159,11 @@ void cb_play(duda_request_t *dr)
 
         chunk_len = snprintf(chunk, size, "%X\r\n", len);
 
+        /*
         response->print(dr, chunk, chunk_len);
         response->print(dr, raw, len);
         response->flush(dr);
-        continue;
-
+        */
         int r;
 
         r = send(dr->cs->socket, chunk, chunk_len, 0);

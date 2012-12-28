@@ -1,5 +1,7 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -100,7 +102,7 @@ void *streamer_worker(void *arg)
 {
     int bytes;
     int remote_fd;
-    int server_fd = (int ) arg;
+    int server_fd = (int) arg;
     int size = 250000;
     char buf[size];
 
@@ -122,8 +124,7 @@ void *streamer_worker(void *arg)
             else if (bytes == -1) {
                 break;
             }
-            int n;
-            n = send(remote_fd, buf, bytes, 0);
+            send(remote_fd, buf, bytes, 0);
         }
 
         close(remote_fd);

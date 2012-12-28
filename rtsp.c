@@ -607,7 +607,7 @@ int main(int argc, char **argv)
      int base;
      struct rtp_header rtp_h;
      int r;
-     int max_buf_size = 65536;
+     int max_buf_size = 65536 * 4;
      unsigned char raw[max_buf_size];
      unsigned char raw_tmp[max_buf_size];
      unsigned char payload[max_buf_size];
@@ -621,7 +621,7 @@ int main(int argc, char **argv)
      int rtp_highest_seq = 0;
      int rtcp_last_sr_ts = 0;
 
-     data = open("raw.rtp", O_CREAT|O_WRONLY|O_TRUNC, 0666);
+     data = open("video.h264", O_CREAT|O_WRONLY|O_TRUNC, 0666);
 
      uint8_t nal_header[4] = {0x00, 0x00, 0x00, 0x01};
 
