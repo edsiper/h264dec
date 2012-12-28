@@ -685,7 +685,7 @@ int main(int argc, char **argv)
 
          /* read incoming data */
          printf("TRYING TO READ %i\n", max_buf_size - raw_length);
-         r = recv(fd, raw + raw_length, max_buf_size - raw_length, MSG_WAITALL);
+         r = recv(fd, raw + raw_length, max_buf_size - raw_length, 0);
          printf(">> READ: %i (up to %i)\n", r, max_buf_size - raw_length);
 
          if (r <= 0) {
@@ -920,6 +920,8 @@ int main(int argc, char **argv)
                            n, h264_start_bit, h264_end_bit);
                 }
                 else {
+                    printf("OTHER NAL!: %i\n", nal_type);
+                    exit(1);
                     raw_offset++;
                     continue;
                 }

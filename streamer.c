@@ -63,12 +63,16 @@ int streamer_pipe_init(int pipefd[2])
     char buf[size];
 
     /* create pipe */
-    ret = pipe2(pipefd, O_NONBLOCK);
+    ret = pipe(pipefd);
     if (ret != 0) {
         printf("Error: could not create streamer pipe\n");
         perror("pipe");
         exit(EXIT_FAILURE);
     }
+
+    /* Set non blocking mode */
+    net_sock_nonblock(pipefd[0]);
+    net_sock_nonblock(pipefd[1]);
 
     /* Get maximum pipe buffer size allowed by the kernel */
     fd = open("/proc/sys/fs/pipe-max-size", O_RDONLY);
