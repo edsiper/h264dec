@@ -715,6 +715,12 @@ int main(int argc, char **argv)
                 /* RTSP header is 4 bytes, update the offset */
                 raw_offset += 4;
 
+                /* If no payload exists, continue with next bytes */
+                if (rtp_length == 0) {
+                    raw_offset++;
+                    continue;
+                }
+
                 if (rtp_length > (raw_length - raw_offset)) {
                     raw_offset -= 4;
                     printf("[CH %i] PENDING: RTP_LENGTH=%i ; RAW_LENGTH=%i; RAW_OFFSET=%i\n",
