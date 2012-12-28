@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <fcntl.h>
 
 /* networking */
 #include <sys/socket.h>
@@ -133,4 +134,14 @@ int net_unix_sock(const char *path)
     }
 
     return server_fd;
+}
+
+int net_sock_nonblock(int sockfd)
+{
+    if (fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFD, 0) | O_NONBLOCK) == -1) {
+        perror("fcntl");
+        return -1;
+    }
+
+   return 0;
 }

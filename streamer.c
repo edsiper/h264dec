@@ -61,7 +61,7 @@ int streamer_pipe_init(int pipefd[2])
     char buf[size];
 
     /* create pipe */
-    ret = pipe(pipefd);
+    ret = pipe2(pipefd, O_NONBLOCK);
     if (ret != 0) {
         printf("Error: could not create streamer pipe\n");
         perror("pipe");
@@ -109,6 +109,8 @@ void *streamer_worker(void *arg)
 
     while (1) {
         remote_fd = accept(server_fd, (struct sockaddr *) &address, &socket_size);
+        net_sock_nonblock(remote_fd);
+
         printf("new connection: %i\n", remote_fd);
 
         while (1) {

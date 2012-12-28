@@ -10,6 +10,7 @@
 int stream_sock;
 int stream_pipe[2];
 
+int streamer_loop(int server_fd);
 int streamer_prepare(const char *name,
                      unsigned char *sps, int sps_len,
                      unsigned char *pps, int pps_len);

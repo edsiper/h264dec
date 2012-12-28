@@ -1,7 +1,7 @@
 ARM_TOOLCHAIN = /home/edsiper/ToolChain/Mozart_Toolchain/
 ARM_ROOT      = $(ARM_TOOLCHAIN)/arm-eabi-uclibc
 CFLAGS = -g -Wall -Wno-format-security
-OBJ    = network.o streamer.o base64.o rtp.o rtsp.o
+OBJ    = network.o streamer.o base64.o rtp.o rtcp.o rtsp.o
 LIBS   = -lpthread
 
 all: h264dec

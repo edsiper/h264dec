@@ -1,4 +1,6 @@
 
+#include <stdint.h>
+
 #ifndef RTCP_H
 #define RTCP_H
 
@@ -9,17 +11,42 @@
 #define RTCP_BYE    203   /*  good bye             */
 #define RTCP_APP    204   /*  application defined  */
 
+/* Identification */
+#define RTCP_SSRC   0x0c143e07
+
 struct rtcp_pkg {
+  /* packet header */
   uint8_t  version;
   uint8_t  padding;
   uint8_t  extension;
   uint8_t  ccrc;
   uint8_t  type;
   uint16_t length;
+
+  /* server report */
   uint32_t ssrc;
   uint32_t ts_msw;
   uint32_t ts_lsw;
+  uint32_t ts_rtp;
+  uint32_t sd_pk_c;
+  uint32_t sd_oc_c;
+
+  /* source definition */
+  uint32_t identifier;
+  uint8_t  sdes_type;
+  uint8_t  sdes_length;
+  uint16_t sdes_text;
+  uint8_t  sdes_type2;
 };
 
+int debug_rtcp;
 
+struct rtcp_pkg *rtcp_decode(unsigned char *payload,
+                             unsigned long len, int *count);
+int rtcp_receiver_report(int fd,
+                         uint32_t identifier,
+                         unsigned int rtp_count,
+                         unsigned int rtp_first_seq,
+                         unsigned int rtp_highest_seq,
+                         unsigned int rtcp_last_sr_ts);
 #endif
