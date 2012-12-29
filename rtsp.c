@@ -469,21 +469,17 @@ void rtsp_header(int fd, int channel, uint16_t length)
     uint8_t tmp_8;
     uint16_t tmp_16;
     int state = 1;
-    int n;
 
     setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));
 
     tmp_8 = 0x24;      /* RTSP magic number */
-    n = send(fd, &tmp_8, 1, 0);
-    printf("sent: %i\n", n);
+    send(fd, &tmp_8, 1, 0);
 
     tmp_8 = channel;   /* channel */
-    n = send(fd, &tmp_8, 1, 0);
-    printf("sent: %i\n", n);
+    send(fd, &tmp_8, 1, 0);
 
     tmp_16 = length;
-    n = send(fd, &tmp_16, 2, 0);
-    printf("sent: %i\n", n);
+    net_send16(fd, tmp_16);
 
     state = 0;
     setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));
@@ -607,7 +603,7 @@ int main(int argc, char **argv)
      int base;
      struct rtp_header rtp_h;
      int r;
-     int max_buf_size = 65536 * 4;
+     int max_buf_size = 65536 * 10;
      unsigned char raw[max_buf_size];
      unsigned char raw_tmp[max_buf_size];
      unsigned char payload[max_buf_size];
@@ -622,6 +618,7 @@ int main(int argc, char **argv)
      int rtcp_last_sr_ts = 0;
 
      data = open("video.h264", O_CREAT|O_WRONLY|O_TRUNC, 0666);
+     //data = open("/dev/null",  O_CREAT|O_WRONLY|O_TRUNC, 0666);
 
      uint8_t nal_header[4] = {0x00, 0x00, 0x00, 0x01};
 
@@ -684,8 +681,7 @@ int main(int argc, char **argv)
          }
 
          /* read incoming data */
-         printf("TRYING TO READ %i\n", max_buf_size - raw_length);
-         r = recv(fd, raw + raw_length, max_buf_size - raw_length, 0);
+         r = recv(fd, raw + raw_length, max_buf_size - raw_length, MSG_WAITALL);
          printf(">> READ: %i (up to %i)\n", r, max_buf_size - raw_length);
 
          if (r <= 0) {
@@ -717,14 +713,17 @@ int main(int argc, char **argv)
 
                 /* If no payload exists, continue with next bytes */
                 if (rtp_length == 0) {
-                    raw_offset++;
+                    raw_offset -= 4;
+                    goto read_pending;
                     continue;
                 }
 
                 if (rtp_length > (raw_length - raw_offset)) {
                     raw_offset -= 4;
-                    printf("[CH %i] PENDING: RTP_LENGTH=%i ; RAW_LENGTH=%i; RAW_OFFSET=%i\n",
-                           channel, rtp_length, raw_length, raw_offset);
+                    printf("   ** Pending    : %u bytes\n",
+                           rtp_length - (raw_length - raw_offset));
+                          //[CH %i] PENDING: RTP_LENGTH=%i ; RAW_LENGTH=%i; RAW_OFFSET=%i\n",
+                          // channel, rtp_length, raw_length, raw_offset);
                     goto read_pending;
                 }
 
@@ -732,6 +731,10 @@ int main(int argc, char **argv)
                 if (channel >= 1) {
                     int idx;
                     int rtcp_count;
+                    int size_RTCP_SR = 32;
+                    int size_RTCP_SDES = 17;
+                    int size_RTCP = 0;
+
                     struct rtcp_pkg *rtcp;
 
                     /* Decode RTCP packet(s) */
@@ -739,18 +742,38 @@ int main(int argc, char **argv)
 
                     /* For each RTCP packet, send a reply */
                     for (idx = 0; idx < rtcp_count; idx++) {
+                        if (rtcp[idx].type == RTCP_SR) {
+                            size_RTCP += size_RTCP_SR;
+                        }
+                        else if (rtcp[idx].type == RTCP_SDES) {
+                            size_RTCP += size_RTCP_SDES;
+                        }
+
+                    }
+
+                    sleep(1);
+                    net_sock_cork(fd, 1);
+                    rtsp_header(fd, 1, size_RTCP);
+
+                    for (idx = 0; idx < rtcp_count; idx++) {
                         /* sender report, send a receiver report */
                         if (rtcp[idx].type == RTCP_SR) {
-                            rtsp_header(fd, 1, 32);
                             rtcp_receiver_report(fd,
                                                  RTCP_SSRC,
                                                  rtp_count,
                                                  rtp_first_seq,
                                                  rtp_highest_seq,
                                                  rtcp_last_sr_ts);
+                            rtcp_last_sr_ts = rtcp[idx].ts_rtp;
+                        }
+                        else if (rtcp[idx].type == RTCP_SDES) {
+                            rtcp_receiver_desc(fd);
                         }
                     }
+                    net_sock_cork(fd, 0);
+
                     raw_offset += rtp_length;
+                    free(rtcp);
                     continue;
                 }
 
@@ -924,6 +947,10 @@ int main(int argc, char **argv)
 
                     printf("            Wrote: %i, start bit: %i  end bit: %i\n",
                            n, h264_start_bit, h264_end_bit);
+                }
+                else if (nal_type == NAL_TYPE_UNDEFINED) {
+                    raw_offset++;
+                    continue;
                 }
                 else {
                     printf("OTHER NAL!: %i\n", nal_type);

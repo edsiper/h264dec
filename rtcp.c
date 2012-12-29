@@ -14,6 +14,7 @@
 #include <netinet/tcp.h>
 
 #include "rtcp.h"
+#include "network.h"
 
 /*
  * Decode a RTSP payload and strip the RTCP frames, it returns an array of
@@ -153,6 +154,7 @@ struct rtcp_pkg *rtcp_decode(unsigned char *payload,
             printf("     Len Check: ");
             if ( (i - start) / 4 != pk[idx].length) {
                 printf("Error\n");
+                exit(1);
             }
             else {
                 printf("OK\n");
@@ -196,14 +198,14 @@ int rtcp_receiver_report(int fd,
 
     /* RTCP: length */
     tmp_16 = 0x07;
-    send(fd, &tmp_16, 2, 0);
+    net_send16(fd, tmp_16);
 
     /* RTCP: sender SSRC */
     tmp_32 = RTCP_SSRC;
-    send(fd, &tmp_32, 4, 0);
+    net_send32(fd, tmp_32);
 
     /* RTCP: Source 1: Identifier */
-    send(fd, &identifier, 4, 0);
+    net_send32(fd, identifier);
 
     /* RTCP: SSRC Contents: Fraction lost */
     tmp_8 = 0x0;
@@ -213,21 +215,21 @@ int rtcp_receiver_report(int fd,
     tmp_8 = 0x0;
     send(fd, &tmp_8, 1, 0);
     tmp_16 = 0x0;
-    send(fd, &tmp_16, 2, 0);
+    net_send16(fd, tmp_16);
 
     /* RTCP: SSRC Contents: Extended highest sequence */
     tmp_16 = rtp_count;
-    send(fd, &tmp_16, 2, 0);
+    net_send16(fd, tmp_16);
     tmp_16 = rtp_highest_seq;
-    send(fd, &tmp_16, 2, 0);
+    net_send16(fd, tmp_16);
 
     /* RTCP: SSRC Contents: interarrival jitter */
-    tmp_32 = 0x113; /* int = 275, taken from wireshark */
-    send(fd, &tmp_32, 4, 0);
+    tmp_32 = 0x0; //0x113; /* int = 275, taken from wireshark */
+    net_send32(fd, tmp_32);
 
     /* RTCP: SSRC Contents: Last SR timestamp */
     tmp_32 = rtcp_last_sr_ts;
-    send(fd, &tmp_32, 4, 0);
+    net_send32(fd, tmp_32);
 
     /* RTCP: SSRC Contents: Timestamp delay */
     if (rtcp_last_sr_ts == 0) {
@@ -236,7 +238,54 @@ int rtcp_receiver_report(int fd,
     else {
         tmp_32 = time(NULL) - rtcp_last_sr_ts;
     }
-    send(fd, &tmp_32, 4, 0);
+    net_send32(fd, tmp_32);
+
+    state = 0;
+    setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));
+
+    return 0;
+}
+
+int rtcp_receiver_desc(int fd)
+{
+    uint8_t  tmp_8;
+    uint16_t tmp_16;
+    uint32_t tmp_32;
+    int state = 1;
+
+    /* Enable TCP Cork */
+    setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));
+
+    /* RTCP: version, padding, report count; int = 129 ; hex = 0x81 */
+    tmp_8 = 0x81;
+    send(fd, &tmp_8, 1, 0);
+
+    /* RTCP: packet type - source description */
+    tmp_8 = RTCP_SDES;
+    send(fd, &tmp_8, 1, 0);
+
+    /* RTCP: length */
+    tmp_16 = 0x04; /* 11 bytes */
+    net_send16(fd, tmp_16);
+
+    /* RTCP: Source 1: Identifier */
+    tmp_32 = RTCP_SSRC;
+    net_send32(fd, tmp_32);
+
+    /* RTCP: SDES: Type CNAME = 1 */
+    tmp_8 = 0x1;
+    send(fd, &tmp_8, 1, 0);
+
+    /* RTCP: SDES: Length */
+    tmp_8 = 0x6;
+    send(fd, &tmp_8, 1, 0);
+
+    /* RTCP: SDES: Text (name string) */
+    send(fd, "monkey", 6, 0);
+
+    /* RTCP: SDES: END */
+    tmp_8 = 0x0;
+    send(fd, &tmp_8, 1, 0);
 
     state = 0;
     setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));

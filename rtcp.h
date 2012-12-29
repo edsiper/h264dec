@@ -49,4 +49,6 @@ int rtcp_receiver_report(int fd,
                          unsigned int rtp_first_seq,
                          unsigned int rtp_highest_seq,
                          unsigned int rtcp_last_sr_ts);
+int rtcp_receiver_desc(int fd);
+
 #endif

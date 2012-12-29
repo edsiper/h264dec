@@ -19,6 +19,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 
 /* Connect to a TCP socket server and returns the file descriptor */
 int net_tcp_connect(char *host, unsigned long port)
@@ -144,4 +146,22 @@ int net_sock_nonblock(int sockfd)
     }
 
    return 0;
+}
+
+
+int net_sock_cork(int fd, int state)
+{
+    return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));
+}
+
+int net_send16(int fd, uint16_t n)
+{
+    uint16_t nbo = htons(n);
+    return send(fd, &nbo, sizeof(nbo), 0);
+}
+
+int net_send32(int fd, uint32_t n)
+{
+    uint32_t nbo = htonl(n);
+    return send(fd, &nbo, sizeof(nbo), 0);
 }

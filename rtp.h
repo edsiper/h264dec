@@ -32,8 +32,8 @@ struct rtp_header {
 #define RTP_SPROP   "sprop-parameter-sets="
 
 /* Enumeration of H.264 NAL unit types */
-enum
-{
+enum {
+    NAL_TYPE_UNDEFINED = 0,
     NAL_TYPE_SINGLE_NAL_MIN	= 1,
     NAL_TYPE_SINGLE_NAL_MAX	= 23,
     NAL_TYPE_STAP_A		= 24,
