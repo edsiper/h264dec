@@ -9,6 +9,7 @@
 
 int stream_sock;
 int stream_pipe[2];
+int stream_fs_fd;
 
 int streamer_loop(int server_fd);
 int streamer_prepare(const char *name,
@@ -17,5 +18,6 @@ int streamer_prepare(const char *name,
 int streamer_pipe_init(int pipefd[2]);
 int streamer_write(const void *buf, size_t count);
 int streamer_write_nal();
-
+int streamer_write_h264_header(unsigned char *sps_dec, size_t sps_len,
+                               unsigned char *pps_dec, size_t pps_len);
 #endif

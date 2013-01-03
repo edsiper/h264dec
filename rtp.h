@@ -23,11 +23,24 @@ struct rtp_header {
     unsigned int cc:4;          /* CSRC count */
     unsigned int marker:1;      /* marker bit */
     unsigned int pt:7;          /* payload type */
-    unsigned int seq:16;        /* sequence number */
+    uint16_t seq:16;            /* sequence number */
     uint32_t ts;                /* timestamp */
     uint32_t ssrc;              /* synchronization source */
     uint32_t csrc[1];           /* optional CSRC list */
 };
+
+struct rtp_stats {
+    uint16_t first_seq;         /* first sequence               */
+    uint16_t highest_seq;       /* highest sequence             */
+    uint16_t rtp_received;      /* RTP sequence number received */
+    uint32_t rtp_identifier;    /* source identifier            */
+    uint32_t rtp_ts;            /* RTP timestamp                */
+    uint32_t rtp_cum_lost;      /* RTP cumulative packet lost   */
+    uint32_t rtp_expected_prior;/* RTP expected prior           */
+    uint32_t rtp_received_prior;/* RTP received prior           */
+    uint32_t jitter;            /* Jitter                       */
+    struct timeval arrival_tv;  /* Last arrival timestamp       */
+} rtp_st;
 
 #define RTP_SPROP   "sprop-parameter-sets="
 
@@ -39,5 +52,9 @@ enum {
     NAL_TYPE_STAP_A		= 24,
     NAL_TYPE_FU_A		= 28,
 };
+
+void rtp_stats_reset();
+void rtp_stats_print();
+unsigned int rtp_parse(unsigned char *raw, unsigned int size);
 
 #endif

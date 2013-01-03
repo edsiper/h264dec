@@ -5,6 +5,8 @@
  *  Written by Eduardo Silva P. <edsiper@gmail.com>
  */
 
+#include <stdint.h>
+
 #ifndef RTSP_H
 #define RTSP_H
 
@@ -24,6 +26,9 @@ struct rtsp_session {
     unsigned int sport_to;      /* server port to   */
     unsigned long session;      /* session ID       */
 };
+
+/* Last Sender Report timestamp (middle 32 bits) */
+uint32_t rtcp_last_sr_ts;
 
 #define VERSION           "0.1"
 #define PROTOCOL_PREFIX   "rtsp://"

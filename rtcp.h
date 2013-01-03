@@ -1,5 +1,6 @@
 
 #include <stdint.h>
+#include <sys/time.h>
 
 #ifndef RTCP_H
 #define RTCP_H
@@ -37,18 +38,25 @@ struct rtcp_pkg {
   uint8_t  sdes_length;
   uint16_t sdes_text;
   uint8_t  sdes_type2;
+
+  /* internal / informational */
 };
 
 int debug_rtcp;
 
 struct rtcp_pkg *rtcp_decode(unsigned char *payload,
                              unsigned long len, int *count);
-int rtcp_receiver_report(int fd,
+int rtcp_receiver_report(int fd);
+/*
+{
                          uint32_t identifier,
                          unsigned int rtp_count,
                          unsigned int rtp_first_seq,
                          unsigned int rtp_highest_seq,
-                         unsigned int rtcp_last_sr_ts);
+                         uint32_t rtcp_last_sr_ts,
+                         uint32_t jitter,
+                         struct timeval *last_arrival);
+*/
 int rtcp_receiver_desc(int fd);
 
 #endif

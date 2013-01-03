@@ -151,14 +151,38 @@ int streamer_loop(int server_fd)
     return 0;
 }
 
+int streamer_write_h264_header(unsigned char *sps_dec, size_t sps_len,
+                               unsigned char *pps_dec, size_t pps_len)
+{
+     uint8_t nal_header[4] = {0x00, 0x00, 0x00, 0x01};
+
+     /* [00 00 00 01] [SPS] */
+     write(stream_fs_fd, &nal_header, sizeof(nal_header));
+     write(stream_fs_fd, sps_dec, sps_len);
+
+     /* [00 00 00 01] [PPS] */
+     write(stream_fs_fd, &nal_header, sizeof(nal_header));
+     write(stream_fs_fd, pps_dec, pps_len);
+
+     return 0;
+}
+
 /* write data to unix socket */
 int streamer_write(const void *buf, size_t count)
 {
+    /* write to file system debug file */
+    write(stream_fs_fd, buf, count);
+
+    /* write to pipe */
     return write(stream_pipe[1], buf, count);
 }
 
 int streamer_write_nal()
 {
     uint8_t nal_header[4] = {0x00, 0x00, 0x00, 0x01};
+
+    /* write header to file system debug file */
+    write(stream_fs_fd, &nal_header, sizeof(nal_header));
+
     return write(stream_pipe[1], &nal_header, sizeof(nal_header));
 }

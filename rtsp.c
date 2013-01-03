@@ -18,6 +18,7 @@
 #include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 /* networking I/O */
 #include <sys/types.h>
@@ -384,7 +385,7 @@ int rtsp_cmd_play(int sock, char *stream, unsigned long session)
 
     status = rtsp_response_status(buf, &err);
     if (status == 200) {
-        RTSP_INFO("PLAY: response status %i (%i bytes)\n%s\n", status, n, buf);
+        RTSP_INFO("PLAY: response status %i (%i bytes)\n", status, n);
     }
     else {
         RTSP_INFO("PLAY: response status %i: %s\n", status, err);
@@ -600,35 +601,20 @@ int main(int argc, char **argv)
      pps_dec = base64_decode((const unsigned char *) pps, strlen(pps), &pps_len);
 
      int channel;
-     int base;
-     struct rtp_header rtp_h;
      int r;
      int max_buf_size = 65536 * 10;
+
      unsigned char raw[max_buf_size];
      unsigned char raw_tmp[max_buf_size];
-     unsigned char payload[max_buf_size];
      unsigned int raw_length;
      unsigned int raw_offset = 0;
      unsigned int rtp_length;
-     unsigned int paysize;
-     int data;
-     int rtp_count = 0;
-     int rtp_first_seq = -1;
-     int rtp_highest_seq = 0;
-     int rtcp_last_sr_ts = 0;
 
-     data = open("video.h264", O_CREAT|O_WRONLY|O_TRUNC, 0666);
-     //data = open("/dev/null",  O_CREAT|O_WRONLY|O_TRUNC, 0666);
+     /* open debug file */
+     stream_fs_fd = open("video.h264", O_CREAT|O_WRONLY|O_TRUNC, 0666);
 
-     uint8_t nal_header[4] = {0x00, 0x00, 0x00, 0x01};
-
-     /* [00 00 00 01] [SPS] */
-     write(data, &nal_header, sizeof(nal_header));
-     write(data, sps_dec, sps_len);
-
-     /* [00 00 00 01] [PPS] */
-     write(data, &nal_header, sizeof(nal_header));
-     write(data, pps_dec, pps_len);
+     /* write H264 header */
+     streamer_write_h264_header(sps_dec, sps_len, pps_dec, pps_len);
 
      /* Create unix named pipe */
      stream_sock = streamer_prepare(opt_name, sps_dec, sps_len, pps_dec, pps_len);
@@ -641,8 +627,8 @@ int main(int argc, char **argv)
      streamer_pipe_init(stream_pipe);
      streamer_loop(stream_sock);
 
-     printf("Streaming will start in 5 seconds...\n");
-     //sleep(5);
+     printf("Streaming will start shortly...\n");
+     rtp_stats_reset();
 
      while (1) {
          raw_offset = 0;
@@ -667,7 +653,6 @@ int main(int argc, char **argv)
                 printf("   Move:  %i\n", raw_length - raw_offset);
                 raw_length = bytes;
                 raw_offset = 0;
-                base = 0;
                 if (raw[raw_offset] != 0x24) {
                     printf("MASTER CORRUPTION\n");
                 }
@@ -677,15 +662,17 @@ int main(int argc, char **argv)
                 raw_length = 0;
                 memset(raw, '\0', sizeof(raw));
             }
-            //exit(0);
          }
 
          /* read incoming data */
+         printf("trying to read: %i bytes\n", max_buf_size - raw_length);
          r = recv(fd, raw + raw_length, max_buf_size - raw_length, MSG_WAITALL);
          printf(">> READ: %i (up to %i)\n", r, max_buf_size - raw_length);
+         fflush(stdout);
 
          if (r <= 0) {
             printf("READ IS ZERO!");
+            rtp_stats_print();
             perror("recv");
             exit(1);
             continue;
@@ -701,12 +688,17 @@ int main(int argc, char **argv)
                 channel = raw[raw_offset + 1];
                 rtp_length  = raw[raw_offset + 2] * 256 + raw[raw_offset + 3];
 
-
                 printf(">> RTSP Interleaved (offset = %i/%i)\n",
                        raw_offset, raw_length);
                 printf("   Magic         : 0x24\n");
                 printf("   Channel       : %i\n", channel);
                 printf("   Payload Length: %i\n", rtp_length);
+
+                if (raw_length > max_buf_size) {
+                    printf("Error exception: raw_length = %i ; max_buf_size = %i\n",
+                           raw_length, max_buf_size);
+                    exit(EXIT_FAILURE);
+                }
 
                 /* RTSP header is 4 bytes, update the offset */
                 raw_offset += 4;
@@ -749,22 +741,17 @@ int main(int argc, char **argv)
                             size_RTCP += size_RTCP_SDES;
                         }
 
+                        printf("MSW = %u\n", rtcp[idx].ts_msw);
+                        printf("LSW = %u\n", rtcp[idx].ts_lsw);
                     }
 
-                    sleep(1);
                     net_sock_cork(fd, 1);
                     rtsp_header(fd, 1, size_RTCP);
 
                     for (idx = 0; idx < rtcp_count; idx++) {
                         /* sender report, send a receiver report */
                         if (rtcp[idx].type == RTCP_SR) {
-                            rtcp_receiver_report(fd,
-                                                 RTCP_SSRC,
-                                                 rtp_count,
-                                                 rtp_first_seq,
-                                                 rtp_highest_seq,
-                                                 rtcp_last_sr_ts);
-                            rtcp_last_sr_ts = rtcp[idx].ts_rtp;
+                            rtcp_receiver_report(fd);
                         }
                         else if (rtcp[idx].type == RTCP_SDES) {
                             rtcp_receiver_desc(fd);
@@ -781,8 +768,6 @@ int main(int argc, char **argv)
                     continue;
                 }
 
-                base = raw_offset;
-
                 /*
                  * Channel 0
                  * ---------
@@ -790,183 +775,22 @@ int main(int argc, char **argv)
                  * we need to identify the RTP header fields so later we can
                  * proceed to extract the H264 information.
                  */
-                rtp_h.version = raw[raw_offset] >> 6;
-                rtp_h.padding = CHECK_BIT(raw[raw_offset], 5);
-                rtp_h.extension = CHECK_BIT(raw[raw_offset], 4);
-                rtp_h.cc = raw[raw_offset] & 0xFF;
-
-                /* next byte */
-                raw_offset++;
-
-                rtp_h.marker = CHECK_BIT(raw[raw_offset], 8);
-                rtp_h.pt     = raw[raw_offset] & 0x7f;
-
-                /* next byte */
-                raw_offset++;
-
-                /* Sequence number */
-                rtp_h.seq = raw[raw_offset] * 256 + raw[raw_offset + 1];
-                raw_offset += 2;
-
-                /* time stamp */
-                memcpy(&rtp_h.ts, raw + raw_offset, 4);
-                raw_offset += 4;
-
-                /* ssrc */
-                memcpy(&rtp_h.ssrc, raw + raw_offset, 4);
-                raw_offset += 4;
-
-                /* Payload size */
-                paysize = rtp_length - (raw_offset - base);
-
-                memset(payload, '\0', sizeof(payload));
-                memcpy(&payload, raw + raw_offset, paysize);
-
-                /* Update counters */
-                rtp_count++;
-                if (rtp_h.seq > rtp_highest_seq) {
-                    rtp_highest_seq = rtp_h.seq;
-                }
-
-                if (rtp_first_seq == -1) {
-                    rtp_first_seq = rtp_h.seq;
-                }
-
-                /* Display RTP header info */
-                printf("   >> RTP\n");
-
-
-                /* Payload Debug
-
-                printf("      =============PAYLOAD===============\n");
-                int y;
-                int c =0;
-                for (y=0; y < paysize; y++) {
-                    if (c == 0) { printf("      ");}
-                    if (c == 8) { printf("\n      ");}
-                    c++;
-                    printf("%X ", payload[y]);
-                }
-                printf("\n      =================================\n");
-                */
-                printf("      Version     : %i\n", rtp_h.version);
-                printf("      Padding     : %i\n", rtp_h.padding);
-                printf("      Extension   : %i\n", rtp_h.extension);
-                printf("      CSRC Count  : %i\n", rtp_h.cc);
-                printf("      Marker      : %i\n", rtp_h.marker);
-                printf("      Payload Type: %i\n", rtp_h.pt);
-                printf("      Sequence    : %i\n", rtp_h.seq);
-                printf("      Timestamp   : %u\n", rtp_h.ts);
-                printf("      Sync Source : %u\n", rtp_h.ssrc);
-
-                /*
-                 * NAL, first byte header
-                 *
-                 *   +---------------+
-                 *   |0|1|2|3|4|5|6|7|
-                 *   +-+-+-+-+-+-+-+-+
-                 *   |F|NRI|  Type   |
-                 *   +---------------+
-                 */
-                int nal_forbidden_zero = CHECK_BIT(payload[0], 7);
-                int nal_nri  = (payload[0] & 0x60) >> 5;
-                int nal_type = (payload[0] & 0x1F);
-
-                printf("      >> NAL\n");
-                printf("         Forbidden zero: %i\n", nal_forbidden_zero);
-                printf("         NRI           : %i\n", nal_nri);
-                printf("         Type          : %i\n", nal_type);
-
-                /* Single NAL unit packet */
-                if (nal_type >= NAL_TYPE_SINGLE_NAL_MIN &&
-                    nal_type <= NAL_TYPE_SINGLE_NAL_MAX) {
-
-                    /* Write NAL header */
-                    write(data, nal_header, sizeof(nal_header));
-                    streamer_write_nal();
-
-                    /* Write NAL unit */
-                    write(data, payload, paysize);
-                    streamer_write(payload, sizeof(paysize));
-                }
-                /* Aggregation packet */
-                else if (nal_type == NAL_TYPE_STAP_A) {
-                    uint8_t *p, *p_end;
-                    uint8_t *q, *q_end;
-                    uint16_t tmp_nal_size;
-
-                    p = raw + raw_offset;
-                    p_end = raw + rtp_length;
-                    q = payload + 1;
-                    q_end = payload + paysize;
-
-                    while (q < q_end && p < p_end) {
-                        write(data, nal_header, sizeof(nal_header));
-                        streamer_write_nal();
-
-                        tmp_nal_size = (*q << 8) | *(q + 1);
-                        printf("tmp_nal_size=%i cmp %i\n",
-                               tmp_nal_size,
-                               (*q << 8) | *(q + 1));
-                        q += 2;
-
-                        write(data, q, tmp_nal_size);
-                        streamer_write(q, tmp_nal_size);
-                        q += tmp_nal_size;
-                    }
-                }
-                else if (nal_type == NAL_TYPE_FU_A) {
-                    printf("         >> Fragmentation Unit\n");
-
-                    unsigned int n;
-                    uint8_t *q;
-                    q = payload;
-
-                    uint8_t h264_start_bit = q[1] & 0x80; //CHECK_BIT(q[1], 7); // & 0x80;
-                    uint8_t h264_end_bit   = q[1] & 0x40; //CHECK_BIT(q[1], 6); // & 0x40;
-                    uint8_t h264_type      = q[1] & 0x1F;
-                    uint8_t h264_nri       = (q[0] & 0x60) >> 5;
-                    uint8_t h264_key       = (h264_nri << 5) | h264_type;
-
-                    if (h264_start_bit) {
-                        /* write NAL header */
-                        write(data, &nal_header, sizeof(nal_header));
-                        streamer_write_nal();
-
-                        /* write NAL unit code */
-                        write(data, &h264_key, sizeof(h264_key));
-                        streamer_write(&h264_key, sizeof(h264_key));
-                    }
-
-                    n = write(data, q + 2, paysize - 2);
-                    streamer_write(q + 2, paysize - 2);
-
-                    if (h264_end_bit) {
-                        /* nothing to do... */
-                    }
-
-                    printf("            Wrote: %i, start bit: %i  end bit: %i\n",
-                           n, h264_start_bit, h264_end_bit);
-                }
-                else if (nal_type == NAL_TYPE_UNDEFINED) {
-                    raw_offset++;
-                    continue;
+                int offset;
+                offset = rtp_parse(raw + raw_offset, rtp_length);
+                if (offset <= 0) {
+                    raw_offset += rtp_length;
                 }
                 else {
-                    printf("OTHER NAL!: %i\n", nal_type);
-                    exit(1);
-                    raw_offset++;
-                    continue;
+                    raw_offset += offset;
                 }
-
-                raw_offset += paysize;
                 continue;
             }
             raw_offset++;
+            continue;
         }
         continue;
     }
-    close(data);
+     close(stream_fs_fd);
 
     return 0;
 }
