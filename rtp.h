@@ -30,18 +30,22 @@ struct rtp_header {
 };
 
 struct rtp_stats {
-    uint16_t first_seq;         /* first sequence               */
-    uint16_t highest_seq;       /* highest sequence             */
-    uint16_t rtp_received;      /* RTP sequence number received */
-    uint32_t rtp_identifier;    /* source identifier            */
-    uint32_t rtp_ts;            /* RTP timestamp                */
-    uint32_t rtp_cum_lost;      /* RTP cumulative packet lost   */
-    uint32_t rtp_expected_prior;/* RTP expected prior           */
-    uint32_t rtp_received_prior;/* RTP received prior           */
-    uint32_t jitter;            /* Jitter                       */
-    struct timeval arrival_tv;  /* Last arrival timestamp       */
+    uint16_t first_seq;         /* first sequence                   */
+    uint16_t highest_seq;       /* highest sequence                 */
+    uint16_t rtp_received;      /* RTP sequence number received     */
+    uint32_t rtp_identifier;    /* source identifier                */
+    uint32_t rtp_ts;            /* RTP timestamp                    */
+    uint32_t rtp_cum_lost;      /* RTP cumulative packet lost       */
+    uint32_t rtp_expected_prior;/* RTP expected prior               */
+    uint32_t rtp_received_prior;/* RTP received prior               */
+    uint32_t transit;           /* Transit time. RFC3550 A.8        */
+    uint32_t jitter;            /* Jitter                           */
+    uint32_t last_dlsr;         /* Last DLSR                        */
+    uint32_t last_arrival;      /* Last arrival in RTP format       */
+    struct timeval ts_delta;    /* Delta time between client/server */
 } rtp_st;
 
+#define RTP_FREQ    90000
 #define RTP_SPROP   "sprop-parameter-sets="
 
 /* Enumeration of H.264 NAL unit types */
@@ -53,6 +57,10 @@ enum {
     NAL_TYPE_FU_A		= 28,
 };
 
+void rtp_rtp2tval(unsigned int ts, struct timeval *tv);
+unsigned int rtp_tval2rtp(unsigned int sec, unsigned int usec);
+unsigned int rtp_now();
+void rtp_stats_update(struct rtp_header *rtp_h);
 void rtp_stats_reset();
 void rtp_stats_print();
 unsigned int rtp_parse(unsigned char *raw, unsigned int size);

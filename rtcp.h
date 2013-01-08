@@ -44,19 +44,11 @@ struct rtcp_pkg {
 
 int debug_rtcp;
 
+uint32_t rtcp_dlsr();
 struct rtcp_pkg *rtcp_decode(unsigned char *payload,
                              unsigned long len, int *count);
 int rtcp_receiver_report(int fd);
-/*
-{
-                         uint32_t identifier,
-                         unsigned int rtp_count,
-                         unsigned int rtp_first_seq,
-                         unsigned int rtp_highest_seq,
-                         uint32_t rtcp_last_sr_ts,
-                         uint32_t jitter,
-                         struct timeval *last_arrival);
-*/
 int rtcp_receiver_desc(int fd);
+int rtcp_worker(int fd);
 
 #endif

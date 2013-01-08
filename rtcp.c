@@ -12,11 +12,48 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #include "rtp.h"
 #include "rtcp.h"
 #include "rtsp.h"
 #include "network.h"
+
+/* Calculate jitter bassed on stats */
+static uint32_t rtcp_jitter()
+{
+    return rtp_st.jitter;
+};
+
+uint32_t rtcp_dlsr()
+{
+    uint32_t dlsr = 0;
+    uint32_t sec;
+    uint32_t usec;
+    uint32_t rate = RTP_FREQ;
+    uint32_t rnow = rtp_now();
+    struct timeval now;
+    struct timeval diff;
+    struct timeval tmp;
+
+    if (rtp_st.rtp_ts <= 0) {
+        return 0;
+    }
+
+
+    if (rtcp_last_sr_ts == 0) {
+        dlsr = 0;
+    }
+    else {
+        dlsr = (rnow - rtcp_last_sr_ts) / 65536;
+            //(diff.tv_sec << 16) |
+            //((((diff.tv_usec << 11) + 15625) / 31250) & 0xFFFF);
+    }
+
+    return dlsr;
+}
+
 
 /*
  * Decode a RTSP payload and strip the RTCP frames, it returns an array of
@@ -28,7 +65,10 @@ struct rtcp_pkg *rtcp_decode(unsigned char *payload,
     int i = 0;
     int start = 0;
     int idx = 0;
+    struct timeval now;
+
     *count = 0;
+    gettimeofday(&now, NULL);
 
     /*
      * We define a maximum of 16 RTCP packets to decode, rarely
@@ -250,34 +290,17 @@ int rtcp_receiver_report(int fd)
     net_send16(fd, tmp_16);
 
     /* RTCP: SSRC Contents: interarrival jitter */
-    tmp_32 = 0;//jitter; //0x113; /* int = 275, taken from wireshark */
+    tmp_32 = rtcp_jitter();
     net_send32(fd, tmp_32);
+    rtp_stats_print();
 
     /* RTCP: SSRC Contents: Last SR timestamp */
     tmp_32 = rtp_st.rtp_ts;    /* fixme! */
     net_send32(fd, tmp_32);
 
     /* RTCP: SSRC Contents: Timestamp delay */
-    uint32_t dlsr = 0;
-    if (rtp_st.arrival_tv.tv_sec > 0) {
-        gettimeofday(&time_now, NULL);
-        if (time_now.tv_usec < rtp_st.arrival_tv.tv_usec) {
-            time_now.tv_usec += 1000000;
-            time_now.tv_sec -= 1;
-        }
-
-        time_diff.tv_sec  = time_now.tv_sec  - rtp_st.arrival_tv.tv_sec;
-        time_diff.tv_usec = time_now.tv_usec - rtp_st.arrival_tv.tv_usec;
-
-        if (rtcp_last_sr_ts == 0) {
-            dlsr = 0;
-        }
-        else {
-            dlsr = (time_diff.tv_sec << 16) |
-                ((((time_diff.tv_usec << 11) + 15625) / 31250) & 0xFFFF);
-        }
-    }
-    dlsr = 4;
+    uint32_t dlsr = rtcp_dlsr();
+    printf("DLSR: %i\n", dlsr);
     net_send32(fd, dlsr);
 
     return 0;
@@ -323,17 +346,37 @@ int rtcp_receiver_desc(int fd)
     return 0;
 }
 
-/*
-unsigned int rtsp_ts_delta(uint32_t msw, uint32_t lsw)
+void *_rtcp_worker(void *arg)
 {
-    unsigned long t;
-	unsigned long ntp2unix = 2208988800;
-    struct tm tm;
-
-    gmtime_t(&t, &tm);
-
-    t = msw - ntp2unix;
-    return 0;
-
+    int fd = (int) arg;
+    uint16_t highest = -1;
+    //sleep(10);
+    return;
+    while (1) {
+        if (highest != rtp_st.highest_seq) {
+            net_sock_cork(fd, 1);
+            rtsp_header(fd, 1, 49);
+            rtcp_receiver_report(fd);
+            rtcp_receiver_desc(fd);
+            net_sock_cork(fd, 0);
+            highest = rtp_st.highest_seq;
+        }
+        sleep(10);
+    }
 }
-*/
+
+int rtcp_worker(int fd)
+{
+    pthread_t tid;
+    pthread_attr_t attr;
+
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&tid, &attr, _rtcp_worker,
+                       (void *) fd) != 0) {
+        printf("Could not launch RTCP thread\n");
+        exit(1);
+    }
+
+    return 0;
+}

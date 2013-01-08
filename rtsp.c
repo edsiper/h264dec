@@ -630,6 +630,7 @@ int main(int argc, char **argv)
      printf("Streaming will start shortly...\n");
      rtp_stats_reset();
 
+     rtcp_worker(fd);
      while (1) {
          raw_offset = 0;
          raw_length = 0;
@@ -740,9 +741,6 @@ int main(int argc, char **argv)
                         else if (rtcp[idx].type == RTCP_SDES) {
                             size_RTCP += size_RTCP_SDES;
                         }
-
-                        printf("MSW = %u\n", rtcp[idx].ts_msw);
-                        printf("LSW = %u\n", rtcp[idx].ts_lsw);
                     }
 
                     net_sock_cork(fd, 1);
@@ -758,7 +756,6 @@ int main(int argc, char **argv)
                         }
                     }
                     net_sock_cork(fd, 0);
-
                     raw_offset += rtp_length;
                     free(rtcp);
                     continue;
@@ -783,6 +780,7 @@ int main(int argc, char **argv)
                 else {
                     raw_offset += offset;
                 }
+
                 continue;
             }
             raw_offset++;
