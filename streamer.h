@@ -10,6 +10,7 @@
 int stream_sock;
 int stream_pipe[2];
 int stream_fs_fd;
+char *stream_dump;
 
 int streamer_loop(int server_fd);
 int streamer_prepare(const char *name,

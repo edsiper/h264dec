@@ -450,7 +450,8 @@ int rtsp_connect(char *stream)
 
 void rtsp_help(int status)
 {
-	printf("Usage: h264dec [-v] [-V] -n CHANNEL_NAME -s rtsp://stream\n\n");
+	printf("Usage: h264dec [-v] [-V] [-d FILENAME] -n CHANNEL_NAME -s rtsp://stream\n\n");
+    printf("  -d, --dump=FILENAME      Dump H264 video data to a file\n");
 	printf("  -s, --stream=URL         RTSP media stream address\n");
     printf("  -n, --name=CHANNEL_NAME  Name for local channel identifier\n");
 	printf("  -h, --help               print this help\n");
@@ -487,7 +488,7 @@ void rtsp_header(int fd, int channel, uint16_t length)
 }
 
 int main(int argc, char **argv)
- {
+{
      int fd;
      int ret;
      int opt;
@@ -501,9 +502,11 @@ int main(int argc, char **argv)
      opt_name = NULL;
      stream_port = RTSP_PORT;
      client_port = RTSP_CLIENT_PORT;
+     stream_dump = NULL;
      debug_rtcp = 1;
 
      static const struct option long_opts[] = {
+         { "dump",    required_argument, NULL, 'd' },
          { "stream",  required_argument, NULL, 's' },
          { "port",    required_argument, NULL, 'p' },
          { "name",    required_argument, NULL, 'n' },
@@ -513,8 +516,12 @@ int main(int argc, char **argv)
          { NULL, 0, NULL, 0 }
      };
 
-     while ((opt = getopt_long(argc, argv, "s:p:n:vVh", long_opts, NULL)) != -1) {
+     while ((opt = getopt_long(argc, argv, "d:s:p:n:vVh",
+                               long_opts, NULL)) != -1) {
          switch (opt) {
+         case 'd':
+             stream_dump = strdup(optarg);
+             break;
          case 's':
              opt_stream = strdup(optarg);
              break;
@@ -611,7 +618,12 @@ int main(int argc, char **argv)
      unsigned int rtp_length;
 
      /* open debug file */
-     stream_fs_fd = open("video.h264", O_CREAT|O_WRONLY|O_TRUNC, 0666);
+     if (stream_dump) {
+         stream_fs_fd = open(stream_dump, O_CREAT|O_WRONLY|O_TRUNC, 0666);
+     }
+     else {
+         stream_fs_fd = -1;
+     }
 
      /* write H264 header */
      streamer_write_h264_header(sps_dec, sps_len, pps_dec, pps_len);
@@ -674,7 +686,7 @@ int main(int argc, char **argv)
          if (r <= 0) {
             printf("READ IS ZERO!");
             rtp_stats_print();
-            perror("recv");
+            ERR();
             exit(1);
             continue;
         }

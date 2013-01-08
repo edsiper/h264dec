@@ -17,6 +17,7 @@
 
 #include "network.h"
 #include "streamer.h"
+#include "utils.h"
 
 /*
  * Register stream data into local file system, create the unix
@@ -37,6 +38,11 @@ int streamer_prepare(const char *name,
 
     /* write metadata file */
     fd = open(path_meta, O_CREAT|O_WRONLY|O_TRUNC, 0666);
+    if (fd <= 0) {
+        ERR();
+        exit(EXIT_FAILURE);
+    }
+
     write(fd, &nal_header, sizeof(nal_header));
     write(fd, sps, sps_len);
     write(fd, &nal_header, sizeof(nal_header));
@@ -78,28 +84,29 @@ int streamer_pipe_init(int pipefd[2])
     fd = open("/proc/sys/fs/pipe-max-size", O_RDONLY);
     if (fd <= 0) {
         printf("Warning: could not open pipe-max-size");
-        perror("open");
-        exit(EXIT_FAILURE);
+    }
+    else {
+        ret = read(fd, buf, size);
+        if (ret <= 0) {
+            printf("Warning: could not read pipe-max-size value");
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
+
+        close(fd);
+
+        pipe_max = atol(buf);
+        ret = fcntl(pipefd[1], F_SETPIPE_SZ, pipe_max);
+
+        if (ret == -1) {
+            printf("Warning: could not increase pipe limit to %lu\n", pipe_max);
+            exit(EXIT_FAILURE);
+        }
+
+        return 0;
     }
 
-    ret = read(fd, buf, size);
-    if (ret <= 0) {
-        printf("Warning: could not read pipe-max-size value");
-        perror("read");
-        exit(EXIT_FAILURE);
-    }
-
-    close(fd);
-
-    pipe_max = atol(buf);
-    ret = fcntl(pipefd[1], F_SETPIPE_SZ, pipe_max);
-
-    if (ret == -1) {
-        printf("Warning: could not increase pipe limit to %lu\n", pipe_max);
-        exit(EXIT_FAILURE);
-    }
-
-    return 0;
+    return -1;
 }
 
 void *streamer_worker(void *arg)
@@ -171,7 +178,9 @@ int streamer_write_h264_header(unsigned char *sps_dec, size_t sps_len,
 int streamer_write(const void *buf, size_t count)
 {
     /* write to file system debug file */
-    write(stream_fs_fd, buf, count);
+    if (stream_dump) {
+        write(stream_fs_fd, buf, count);
+    }
 
     /* write to pipe */
     return write(stream_pipe[1], buf, count);
@@ -182,7 +191,9 @@ int streamer_write_nal()
     uint8_t nal_header[4] = {0x00, 0x00, 0x00, 0x01};
 
     /* write header to file system debug file */
-    write(stream_fs_fd, &nal_header, sizeof(nal_header));
+    if (stream_dump) {
+        write(stream_fs_fd, &nal_header, sizeof(nal_header));
+    }
 
     return write(stream_pipe[1], &nal_header, sizeof(nal_header));
 }

@@ -5,6 +5,8 @@
  *  Written by Eduardo Silva P. <edsiper@gmail.com>
  */
 
+#include <errno.h>
+
 #ifndef RTPS_UTILS_H
 #define RTPS_UTILS_H
 
@@ -42,6 +44,9 @@
 /* Check if a bit is 1 or 0 */
 #define CHECK_BIT(var, pos) !!((var) & (1 << (pos)))
 
+/* Error debug */
+#define ERR()     str_error(errno, __FILE__, __LINE__, __FUNCTION__)
+
 /* fcntl pipe value */
 #ifndef F_LINUX_SPECIFIC_BASE
 #define F_LINUX_SPECIFIC_BASE       1024
@@ -52,5 +57,7 @@
 #ifndef F_GETPIPE_SZ
 #define F_GETPIPE_SZ	(F_LINUX_SPECIFIC_BASE + 8)
 #endif
+
+void str_error(int errnum, const char *file, int line, const char *func);
 
 #endif
