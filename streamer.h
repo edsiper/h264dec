@@ -12,7 +12,12 @@ int stream_pipe[2];
 int stream_fs_fd;
 char *stream_dump;
 
-int streamer_loop(int server_fd);
+struct stream_w {
+    int   server_fd;
+    pid_t task_id;
+};
+
+pid_t streamer_loop(int server_fd);
 int streamer_prepare(const char *name,
                      unsigned char *sps, int sps_len,
                      unsigned char *pps, int pps_len);

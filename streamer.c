@@ -9,11 +9,11 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <syscall.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-
 
 #include "network.h"
 #include "streamer.h"
@@ -113,15 +113,26 @@ void *streamer_worker(void *arg)
 {
     int bytes;
     int remote_fd;
-    int server_fd = (int) arg;
-    int size = 250000;
+    int server_fd;
+    int size = 650000;
     char buf[size];
-
+    struct stream_w *sw;
     struct sockaddr_un address;
     socklen_t socket_size = sizeof(struct sockaddr_un);
 
+
+    sw = arg;
+    sw->task_id = syscall(__NR_gettid);
+    server_fd = sw->server_fd;
+
     while (1) {
         remote_fd = accept(server_fd, (struct sockaddr *) &address, &socket_size);
+        if (remote_fd <= 0) {
+            ERR();
+            printf(">> Streamer: closing worker\n");
+            pthread_exit(0);
+
+        }
         net_sock_nonblock(remote_fd);
 
         printf("new connection: %i\n", remote_fd);
@@ -133,7 +144,8 @@ void *streamer_worker(void *arg)
                 send(remote_fd, buf, bytes, 0);
             }
             else if (bytes == -1) {
-                break;
+                sleep(0.5);
+                continue;
             }
             send(remote_fd, buf, bytes, 0);
         }
@@ -142,20 +154,26 @@ void *streamer_worker(void *arg)
     }
 }
 
-int streamer_loop(int server_fd)
+pid_t streamer_loop(int server_fd)
 {
     pthread_t tid;
     pthread_attr_t thread_attr;
+    struct stream_w *sw;
+
+    printf("1 server_fd = %i\n", server_fd);
+    sw = malloc(sizeof(struct stream_w));
+    sw->server_fd = server_fd;
+    sw->task_id   = 0;
 
     pthread_attr_init(&thread_attr);
     pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
     if (pthread_create(&tid, &thread_attr,
-                       streamer_worker, (void *) server_fd) < 0) {
+                       streamer_worker, (void *) sw) < 0) {
         perror("pthread_create");
         exit(EXIT_FAILURE);
     }
 
-    return 0;
+    return sw->task_id;
 }
 
 int streamer_write_h264_header(unsigned char *sps_dec, size_t sps_len,

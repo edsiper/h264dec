@@ -28,32 +28,32 @@ static uint32_t rtcp_jitter()
 
 uint32_t rtcp_dlsr()
 {
-    uint32_t dlsr = 0;
-    uint32_t sec;
-    uint32_t usec;
-    uint32_t rate = RTP_FREQ;
-    uint32_t rnow = rtp_now();
     struct timeval now;
-    struct timeval diff;
-    struct timeval tmp;
+    double delay;
 
-    if (rtp_st.rtp_ts <= 0) {
+    if (rtp_st.last_rcv_SR_ts == 0) {
         return 0;
     }
 
-
-    if (rtcp_last_sr_ts == 0) {
-        dlsr = 0;
-    }
-    else {
-        dlsr = (rnow - rtcp_last_sr_ts) / 65536;
-            //(diff.tv_sec << 16) |
-            //((((diff.tv_usec << 11) + 15625) / 31250) & 0xFFFF);
-    }
-
-    return dlsr;
+    gettimeofday(&now,NULL);
+    delay= (now.tv_sec - rtp_st.last_rcv_SR_time.tv_sec) +
+           ((now.tv_usec - rtp_st.last_rcv_SR_time.tv_usec)*1e-6);
+    delay= (delay * 65536);
+    rtp_st.delay_snc_last_SR = (uint32_t) delay;
+    return rtp_st.delay_snc_last_SR;
 }
 
+static void compute_rtt(const struct timeval *now){
+    uint64_t curntp = rtp_timeval_to_ntp(now);
+    uint32_t approx_ntp = (curntp >> 16) & 0xFFFFFFFF;
+    uint32_t last_sr_time = rtp_st.last_rcv_SR_ts;
+    uint32_t sr_delay = rtp_st.delay_snc_last_SR;
+
+    if (last_sr_time !=0 && sr_delay!=0){
+        double rtt_frac = approx_ntp-last_sr_time-sr_delay;
+        rtp_st.rtt_frac /= 65536.0;
+    }
+}
 
 /*
  * Decode a RTSP payload and strip the RTCP frames, it returns an array of
@@ -150,8 +150,14 @@ struct rtcp_pkg *rtcp_decode(unsigned char *payload,
                                 (payload[i + 21] << 24)
                                 );
             i += 24;
-            rtcp_last_sr_ts = ((pk[idx].ts_msw & 0xFFFF) << 16) |
-                               (pk[idx].ts_lsw >> 16);
+
+            /* last SR */
+            rtp_st.last_rcv_SR_ts = ((pk[idx].ts_msw & 0xFFFF) << 16) |
+                                     (pk[idx].ts_lsw >> 16);
+
+            rtp_st.last_rcv_SR_time.tv_sec  = now.tv_sec;
+            rtp_st.last_rcv_SR_time.tv_usec = now.tv_usec;
+
             rtp_st.rtp_identifier = pk[idx].ssrc;
 
             if (debug_rtcp) {
@@ -224,13 +230,41 @@ struct rtcp_pkg *rtcp_decode(unsigned char *payload,
     return pk;
 }
 
+
+/* create a receiver report package */
+int rtcp_receiver_report_zero(int fd)
+{
+    uint8_t  tmp_8;
+    uint16_t tmp_16;
+    uint32_t tmp_32;
+
+    /* RTCP: version, padding, report count = 0; int = 128 ; hex = 0x80 */
+    tmp_8 = 0x80;
+    send(fd, &tmp_8, 1, 0);
+
+    /* RTCP: packet type - receiver report */
+    tmp_8 = RTCP_RR;
+    send(fd, &tmp_8, 1, 0);
+
+    /* RTCP: length */
+    tmp_16 = 0x01;
+    net_send16(fd, tmp_16);
+
+    /* RTCP: sender SSRC */
+    tmp_32 = RTCP_SSRC;
+    net_send32(fd, tmp_32);
+
+    return 0;
+}
+
 /* create a receiver report package */
 int rtcp_receiver_report(int fd)
 {
     uint8_t  tmp_8;
     uint16_t tmp_16;
     uint32_t tmp_32;
-    struct timeval time_now, time_diff;
+    struct timeval now;
+    gettimeofday(&now, NULL);
 
     /* RTCP: version, padding, report count; int = 129 ; hex = 0x81 */
     tmp_8 = 0x81;
@@ -258,7 +292,7 @@ int rtcp_receiver_report(int fd)
     uint32_t expected;
     extended_max = rtp_st.rtp_received + rtp_st.highest_seq;
     expected = extended_max - rtp_st.first_seq + 1;
-    rtp_st.rtp_cum_lost = expected - rtp_st.rtp_received;
+    rtp_st.rtp_cum_lost = expected - rtp_st.rtp_received - 1;
 
     /* Fraction */
     uint32_t expected_interval;
@@ -276,15 +310,15 @@ int rtcp_receiver_report(int fd)
     else fraction = (lost_interval << 8) / expected_interval;
 
     /* RTCP: SSRC Contents: Fraction lost */
-    //net_send8(fd, fraction);
+    //send(fd, &fraction, sizeof(fraction), 0);
 
-    tmp_32 = (fraction << 24) | (rtp_st.rtp_cum_lost & 0xFFFFFF);
+    tmp_32 = 0;//(fraction << 24) | ((rtp_st.rtp_cum_lost ) & 0xFFFFFF);
     net_send32(fd, tmp_32);
     /* RTCP: SSRC Contents: Cumulative packet losts */
     //net_send24(fd, rtp_st.rtp_cum_lost);
 
     /* RTCP: SSRC Contents: Extended highest sequence */
-    tmp_16 = rtp_st.rtp_received;
+    tmp_16 = 1;// FIXME!??? rtp_st.rtp_received;
     net_send16(fd, tmp_16);
     tmp_16 = rtp_st.highest_seq;
     net_send16(fd, tmp_16);
@@ -295,12 +329,11 @@ int rtcp_receiver_report(int fd)
     rtp_stats_print();
 
     /* RTCP: SSRC Contents: Last SR timestamp */
-    tmp_32 = rtp_st.rtp_ts;    /* fixme! */
+    tmp_32 = rtp_st.last_rcv_SR_ts;
     net_send32(fd, tmp_32);
 
     /* RTCP: SSRC Contents: Timestamp delay */
     uint32_t dlsr = rtcp_dlsr();
-    printf("DLSR: %i\n", dlsr);
     net_send32(fd, dlsr);
 
     return 0;
@@ -349,19 +382,12 @@ int rtcp_receiver_desc(int fd)
 void *_rtcp_worker(void *arg)
 {
     int fd = (int) arg;
-    uint16_t highest = -1;
-    //sleep(10);
+
     return;
+    //sleep(1);
     while (1) {
-        if (highest != rtp_st.highest_seq) {
-            net_sock_cork(fd, 1);
-            rtsp_header(fd, 1, 49);
-            rtcp_receiver_report(fd);
-            rtcp_receiver_desc(fd);
-            net_sock_cork(fd, 0);
-            highest = rtp_st.highest_seq;
-        }
-        sleep(10);
+        rtsp_rtcp_reports(fd);
+        sleep(5);
     }
 }
 

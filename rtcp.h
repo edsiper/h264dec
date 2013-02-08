@@ -48,6 +48,7 @@ uint32_t rtcp_dlsr();
 struct rtcp_pkg *rtcp_decode(unsigned char *payload,
                              unsigned long len, int *count);
 int rtcp_receiver_report(int fd);
+int rtcp_receiver_report_zero(int fd);
 int rtcp_receiver_desc(int fd);
 int rtcp_worker(int fd);
 

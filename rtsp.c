@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <signal.h>
 #include <getopt.h>
 #include <time.h>
 #include <fcntl.h>
@@ -34,21 +35,48 @@
 #include "utils.h"
 #include "rtcp.h"
 #include "rtp.h"
-
-/* global variables */
-int rtsp_cseq;
-int client_port;
-int opt_verbose;
-char *opt_stream;
-char *opt_name;
-char *stream_host;
-char *dsp;
-unsigned long stream_port;
+#include "h264dec.h"
 
 void rtsp_cseq_inc()
 {
     rtsp_cseq++;
 }
+
+void rtsp_header(int fd, int channel, uint16_t length)
+{
+    uint8_t tmp_8;
+    uint16_t tmp_16;
+
+    tmp_8 = 0x24;      /* RTSP magic number */
+    send(fd, &tmp_8, 1, 0);
+
+    tmp_8 = channel;   /* channel */
+    send(fd, &tmp_8, 1, 0);
+
+    tmp_16 = length;
+    net_send16(fd, tmp_16);
+}
+
+void rtsp_rtcp_reports(int fd)
+{
+    //    net_sock_cork(fd, 1);
+    rtsp_header(fd, 1, 74);
+
+    /* report 1 */
+    rtcp_receiver_report(fd);       /* 32 bytes */
+    rtcp_receiver_desc(fd);         /* 17 bytes */
+
+    usleep(200);
+    /* report 0 */
+    //rtcp_receiver_report_zero(fd);  /*  8 bytes */
+    //rtcp_receiver_desc(fd);         /* 17 bytes */
+
+    //net_sock_cork(fd, 0);
+
+    printf("================RTCP SENT!=================\n");
+}
+
+
 
 /*
  * Returns the RTSP status code from the response, if an error occurred it
@@ -336,7 +364,7 @@ int rtsp_cmd_setup(int sock, char *stream, struct rtsp_session *session)
         sep = strchr(p, '\r');
         memset(field, '\0', sizeof(field));
         strncpy(field, p + sizeof(SETUP_SESSION) - 1, sep - p - sizeof(SETUP_SESSION) + 1);
-        session_id = atoi(field);
+        session_id = atol(field);
     }
     else {
         RTSP_INFO("SETUP: response status %i: %s\n", status, err);
@@ -376,6 +404,7 @@ int rtsp_cmd_play(int sock, char *stream, unsigned long session)
     RTSP_INFO("PLAY: request sent\n");
 
     memset(buf, '\0', sizeof(buf));
+
     n = recv(sock, buf, size - 1, 0);
     if (n <= 0) {
         printf("Error: Server did not respond properly, closing...");
@@ -448,130 +477,29 @@ int rtsp_connect(char *stream)
     return net_tcp_connect(stream_host, stream_port);
 }
 
-void rtsp_help(int status)
-{
-	printf("Usage: h264dec [-v] [-V] [-d FILENAME] -n CHANNEL_NAME -s rtsp://stream\n\n");
-    printf("  -d, --dump=FILENAME      Dump H264 video data to a file\n");
-	printf("  -s, --stream=URL         RTSP media stream address\n");
-    printf("  -n, --name=CHANNEL_NAME  Name for local channel identifier\n");
-	printf("  -h, --help               print this help\n");
-	printf("  -v, --version            print version number\n");
-	printf("  -V, --verbose            enable verbose mode\n");
-	printf("\n");
-	exit(status);
-}
-
-void rtsp_banner()
-{
-    printf("H264Dec v%s\n\n", VERSION);
-}
-
-void rtsp_header(int fd, int channel, uint16_t length)
-{
-    uint8_t tmp_8;
-    uint16_t tmp_16;
-    int state = 1;
-
-    setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));
-
-    tmp_8 = 0x24;      /* RTSP magic number */
-    send(fd, &tmp_8, 1, 0);
-
-    tmp_8 = channel;   /* channel */
-    send(fd, &tmp_8, 1, 0);
-
-    tmp_16 = length;
-    net_send16(fd, tmp_16);
-
-    state = 0;
-    setsockopt(fd, IPPROTO_TCP, TCP_CORK, &state, sizeof(state));
-}
-
-int main(int argc, char **argv)
+int rtsp_loop()
 {
      int fd;
      int ret;
-     int opt;
      struct rtsp_session rtsp_s;
-
-     /* defaults */
-     rtsp_cseq = 1;
-     stream_sock = -1;
-     opt_verbose = 0;
-     opt_stream = NULL;
-     opt_name = NULL;
-     stream_port = RTSP_PORT;
-     client_port = RTSP_CLIENT_PORT;
-     stream_dump = NULL;
-     debug_rtcp = 1;
-
-     static const struct option long_opts[] = {
-         { "dump",    required_argument, NULL, 'd' },
-         { "stream",  required_argument, NULL, 's' },
-         { "port",    required_argument, NULL, 'p' },
-         { "name",    required_argument, NULL, 'n' },
-         { "version", no_argument,       NULL, 'v' },
-         { "verbose", no_argument,       NULL, 'V' },
-         { "help",    no_argument,       NULL, 'h' },
-         { NULL, 0, NULL, 0 }
-     };
-
-     while ((opt = getopt_long(argc, argv, "d:s:p:n:vVh",
-                               long_opts, NULL)) != -1) {
-         switch (opt) {
-         case 'd':
-             stream_dump = strdup(optarg);
-             break;
-         case 's':
-             opt_stream = strdup(optarg);
-             break;
-         case 'p':
-             client_port = atoi(optarg);
-             break;
-         case 'n':
-             opt_name = strdup(optarg);
-             break;
-         case 'v':
-             rtsp_banner();
-             exit(EXIT_SUCCESS);
-         case 'V':
-             opt_verbose = 1;
-             break;
-         case 'h':
-             rtsp_help(EXIT_SUCCESS);
-         case '?':
-             rtsp_help(EXIT_FAILURE);
-         }
-     }
-
-
-     if (!opt_stream || strncmp(opt_stream, PROTOCOL_PREFIX,
-                                sizeof(PROTOCOL_PREFIX) - 1) != 0) {
-         printf("Error: Invalid stream input.\n\n");
-         rtsp_help(EXIT_FAILURE);
-     }
-
-     if (!opt_name) {
-         printf("Error: Local channel name not specified.\n\n");
-         rtsp_help(EXIT_FAILURE);
-     }
+     pid_t streamer_worker;
 
      /* Connect to server */
      fd = rtsp_connect(opt_stream);
      if (fd <= 0) {
-         exit(EXIT_FAILURE);
+         return -1;
      }
 
      ret = rtsp_cmd_options(fd, opt_stream);
      if (ret != 0) {
-         exit(EXIT_FAILURE);
+         return -1;
      }
 
      char *params;
      ret = rtsp_cmd_describe(fd, opt_stream, &params);
      if (ret != 0) {
          printf("Error: Could not send DESCRIBE command to RTSP server\n");
-         exit(EXIT_FAILURE);
+         return -1;
      }
 
      rtsp_s.socket = fd;
@@ -579,6 +507,10 @@ int main(int argc, char **argv)
 
      rtsp_cmd_setup(fd, opt_stream, &rtsp_s);
      rtsp_cmd_play(fd, opt_stream, rtsp_s.session);
+
+     rtp_stats_reset();
+     rtp_st.rtp_identifier = rtsp_s.session;
+     //rtsp_rtcp_reports(fd);
 
      /* H264 Parameters, taken from the SDP output */
      int p_size;
@@ -607,9 +539,12 @@ int main(int argc, char **argv)
      sps_dec = base64_decode((const unsigned char *) sps, strlen(sps), &sps_len);
      pps_dec = base64_decode((const unsigned char *) pps, strlen(pps), &pps_len);
 
+     free(sps);
+     free(pps);
+
      int channel;
      int r;
-     int max_buf_size = 65536 * 10;
+     int max_buf_size = 1000000;
 
      unsigned char raw[max_buf_size];
      unsigned char raw_tmp[max_buf_size];
@@ -637,11 +572,17 @@ int main(int argc, char **argv)
 
      /* Local pipe */
      streamer_pipe_init(stream_pipe);
-     streamer_loop(stream_sock);
+     streamer_worker = streamer_loop(stream_sock);
 
      printf("Streaming will start shortly...\n");
-     rtp_stats_reset();
 
+     /* Set recv timeout for fd */
+     struct timeval tv;
+     tv.tv_sec = 15;  /* 30 Secs Timeout */
+     tv.tv_usec = 0;  // Not init'ing this can cause strange errors
+     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv,sizeof(struct timeval));
+
+     int send_rtcp = 0;
      rtcp_worker(fd);
      while (1) {
          raw_offset = 0;
@@ -678,20 +619,34 @@ int main(int argc, char **argv)
          }
 
          /* read incoming data */
-         printf("trying to read: %i bytes\n", max_buf_size - raw_length);
-         r = recv(fd, raw + raw_length, max_buf_size - raw_length, MSG_WAITALL);
+         printf(">> RECV: max %i bytes\n", max_buf_size - raw_length);
+         r = recv(fd, raw + raw_length, max_buf_size - raw_length, 0);
          printf(">> READ: %i (up to %i)\n", r, max_buf_size - raw_length);
          fflush(stdout);
 
          if (r <= 0) {
-            printf("READ IS ZERO!");
-            rtp_stats_print();
-            ERR();
-            exit(1);
-            continue;
-        }
+             if (errno == EAGAIN) {
+                 //printf("Socket timeout, send out RTCP packets\n");
+                 //goto read_pending;
+             }
 
-        raw_length += r;
+             rtp_stats_print();
+             printf(">> RTSP: Server closed connection!\n");
+
+            /* cleanup */
+            if (stream_fs_fd > 0) {
+                close(stream_fs_fd);
+            }
+
+            close(fd);
+            close(stream_sock);
+            close(stream_pipe[0]);
+            close(stream_pipe[1]);
+            exit(1);
+            return -1;
+         }
+
+         raw_length += r;
 
         /* parse all data in our buffer */
         while (raw_offset < raw_length) {
@@ -699,7 +654,7 @@ int main(int argc, char **argv)
             /* RTSP Interleaved header */
             if (raw[raw_offset] == 0x24) {
                 channel = raw[raw_offset + 1];
-                rtp_length  = raw[raw_offset + 2] * 256 + raw[raw_offset + 3];
+                rtp_length  = (raw[raw_offset + 2] << 8 | raw[raw_offset + 3]);
 
                 printf(">> RTSP Interleaved (offset = %i/%i)\n",
                        raw_offset, raw_length);
@@ -729,7 +684,16 @@ int main(int argc, char **argv)
                            rtp_length - (raw_length - raw_offset));
                           //[CH %i] PENDING: RTP_LENGTH=%i ; RAW_LENGTH=%i; RAW_OFFSET=%i\n",
                           // channel, rtp_length, raw_length, raw_offset);
+                    if (send_rtcp == 1){
+                        rtsp_rtcp_reports(fd);
+                        send_rtcp = 0;
+                    }
+
                     goto read_pending;
+                }
+
+                if (rtp_st.rtp_received % 20) {
+                    rtsp_rtcp_reports(fd);
                 }
 
                 /* RTCP data */
@@ -745,7 +709,12 @@ int main(int argc, char **argv)
                     /* Decode RTCP packet(s) */
                     rtcp = rtcp_decode(raw + raw_offset, rtp_length, &rtcp_count);
 
-                    /* For each RTCP packet, send a reply */
+                    if (rtcp_count >= 1 && rtcp[0].type == RTCP_SR) {
+                        send_rtcp = 1;
+                        //rtsp_rtcp_reports(fd);
+                    }
+
+                    /* For each RTCP packet, send a reply
                     for (idx = 0; idx < rtcp_count; idx++) {
                         if (rtcp[idx].type == RTCP_SR) {
                             size_RTCP += size_RTCP_SR;
@@ -755,11 +724,11 @@ int main(int argc, char **argv)
                         }
                     }
 
-                    net_sock_cork(fd, 1);
+                    net_sock_cork(fd, 1);  INVALID
                     rtsp_header(fd, 1, size_RTCP);
 
                     for (idx = 0; idx < rtcp_count; idx++) {
-                        /* sender report, send a receiver report */
+                         sender report, send a receiver report
                         if (rtcp[idx].type == RTCP_SR) {
                             rtcp_receiver_report(fd);
                         }
@@ -767,7 +736,8 @@ int main(int argc, char **argv)
                             rtcp_receiver_desc(fd);
                         }
                     }
-                    net_sock_cork(fd, 0);
+                    net_sock_cork(fd, 0); INVALID
+                    */
                     raw_offset += rtp_length;
                     free(rtcp);
                     continue;
@@ -791,6 +761,11 @@ int main(int argc, char **argv)
                 }
                 else {
                     raw_offset += offset;
+                }
+
+                if (send_rtcp == 1) {
+                    //rtsp_rtcp_reports(fd);
+                    send_rtcp = 0;
                 }
 
                 continue;

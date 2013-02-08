@@ -35,14 +35,20 @@ struct rtp_stats {
     uint16_t rtp_received;      /* RTP sequence number received     */
     uint32_t rtp_identifier;    /* source identifier                */
     uint32_t rtp_ts;            /* RTP timestamp                    */
-    uint32_t rtp_cum_lost;      /* RTP cumulative packet lost       */
+    uint32_t rtp_cum_lost;       /* RTP cumulative packet lost       */
     uint32_t rtp_expected_prior;/* RTP expected prior               */
     uint32_t rtp_received_prior;/* RTP received prior               */
     uint32_t transit;           /* Transit time. RFC3550 A.8        */
     uint32_t jitter;            /* Jitter                           */
+    uint32_t lst;
     uint32_t last_dlsr;         /* Last DLSR                        */
-    uint32_t last_arrival;      /* Last arrival in RTP format       */
-    struct timeval ts_delta;    /* Delta time between client/server */
+    uint32_t last_rcv_SR_ts;    /* Last arrival in RTP format       */
+    uint32_t delay_snc_last_SR; /* Delay sinde last SR              */
+    struct timeval
+    last_rcv_SR_time;           /* Last SR arrival                  */
+    struct timeval
+    last_rcv_time;
+    double rtt_frac;
 } rtp_st;
 
 #define RTP_FREQ    90000
@@ -57,9 +63,7 @@ enum {
     NAL_TYPE_FU_A		= 28,
 };
 
-void rtp_rtp2tval(unsigned int ts, struct timeval *tv);
-unsigned int rtp_tval2rtp(unsigned int sec, unsigned int usec);
-unsigned int rtp_now();
+uint64_t rtp_timeval_to_ntp(const struct timeval *tv);
 void rtp_stats_update(struct rtp_header *rtp_h);
 void rtp_stats_reset();
 void rtp_stats_print();

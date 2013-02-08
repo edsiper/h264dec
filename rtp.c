@@ -11,10 +11,12 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/time.h>
+#include <arpa/inet.h>
 
 /* local headers */
 #include "buffer.h"
 #include "rtsp.h"
+#include "rtcp.h"
 #include "rtp.h"
 #include "network.h"
 #include "utils.h"
@@ -231,8 +233,11 @@ unsigned int rtp_parse(unsigned char *raw, unsigned int size)
     }
     raw_offset += paysize;
 
-    rtp_stats_print();
+    if (rtp_h.seq > rtp_st.highest_seq) {
+        rtp_st.highest_seq = rtp_h.seq;
+    }
 
+    rtp_stats_print();
     return raw_offset;
 }
 
@@ -242,36 +247,19 @@ void rtp_rtp2tval(unsigned int ts, struct timeval *tv)
     tv->tv_usec = ((((ts % RTP_FREQ) / (ts / 8000))) * 125);
 }
 
-unsigned int rtp_tval2rtp(unsigned int sec, unsigned int usec)
+uint64_t rtp_timeval_to_ntp(const struct timeval *tv)
 {
-    double rate = RTP_FREQ;
-    int tsec  = (sec * rate);
-    int tusec = (((rate / 8000) * (usec / 125) / rate) * rate);
+    uint64_t msw;
+    uint64_t lsw;
 
-    return (tsec + tusec);
+    /* 0x83AA7E80 is the number of seconds from 1900 to 1970 */
+    msw = tv->tv_sec + 0x83AA7E80;
+    lsw = (uint32_t)((double)tv->tv_usec*(double)(((uint64_t)1)<<32)*1.0e-6);
+
+    return ((msw << 32) | lsw);
 }
 
-
-uint32_t rtp_tval2RTP(struct timeval tv) {
-    // Begin by converting from "struct timeval" units to RTP timestamp units:
-    uint32_t ts_increment = (RTP_FREQ * tv.tv_sec);
-    ts_increment += (uint32_t) (RTP_FREQ * (tv.tv_usec / 1000000.0) + 0.5);
-
-    // Then add this to our 'timestamp base':
-    //if (fNextTimestampHasBeenPreset) {
-        // Make the returned timestamp the same as the current "fTimestampBase",
-        // so that timestamps begin with the value that was previously preset:
-    //    fTimestampBase -= timestampIncrement;
-    //fNextTimestampHasBeenPreset = False;
-    //}
-
-    //uint32_t rtpTimestamp = fTimestampBase + timestampIncrement;
-
-    //return rtpTimestamp;
-    return ts_increment;
-}
-
-
+/*
 uint32_t rtp_now()
 {
     struct timeval tmp;
@@ -283,30 +271,38 @@ uint32_t rtp_now()
     return rtp_tval2RTP(tmp);
     return rtp_tval2rtp(tmp.tv_sec, tmp.tv_usec);
 }
-
+*/
 void rtp_stats_reset()
 {
     memset(&rtp_st, '\0', sizeof(struct rtp_stats));
 }
 
+/* Every time a RTP packet arrive, update the stats */
 void rtp_stats_update(struct rtp_header *rtp_h)
 {
     uint32_t transit;
     int delta;
     struct timeval now;
-    struct timeval now_rtp;
-    struct timeval tmp;
 
     gettimeofday(&now, NULL);
+    rtp_st.rtp_received++;
+
+    /* Highest sequence */
+    if (rtp_h->seq > rtp_st.highest_seq) {
+        rtp_st.highest_seq = rtp_h->seq;
+    }
+
 
     /* Update RTP timestamp */
-    if (rtp_st.rtp_received == 0) {
-        rtp_st.rtp_ts = rtp_h->ts;
+    if (rtp_st.last_rcv_time.tv_sec == 0) {
+        //rtp_st.rtp_ts = rtp_h->ts;
         rtp_st.first_seq = rtp_h->seq;
-        rtp_st.jitter = 0;
-        rtp_st.last_dlsr = 0;
+        //rtp_st.jitter = 0;
+        //rtp_st.last_dlsr = 0;
+        //rtp_st.rtp_cum_lost = 0;
+        gettimeofday(&rtp_st.last_rcv_time, NULL);
 
-        /* deltas */
+        /* deltas
         int sec  = (rtp_h->ts / RTP_FREQ);
         int usec = (((rtp_h->ts % RTP_FREQ) / (RTP_FREQ / 8000))) * 125;
         rtp_st.ts_delta.tv_sec  = now.tv_sec - sec;
@@ -316,39 +312,25 @@ void rtp_stats_update(struct rtp_header *rtp_h)
         rtp_st.last_arrival = rtp_tval2rtp(rtp_st.ts_delta.tv_sec,
                                            rtp_st.ts_delta.tv_usec);
         rtp_st.last_arrival = rtp_tval2RTP(now);
+
     }
-    else {
-        /* get local RTP time */
-        now_rtp.tv_sec  = now.tv_sec  - rtp_st.ts_delta.tv_sec;
-        now_rtp.tv_usec = now.tv_usec - rtp_st.ts_delta.tv_usec;
-
-        /* Highest sequence */
-        if (rtp_h->seq > rtp_st.highest_seq) {
-            rtp_st.highest_seq = rtp_h->seq;
-        }
-
+    else {*/
+    }
         /* Jitter */
-        int t = rtp_tval2rtp(now_rtp.tv_sec, now_rtp.tv_usec);
-        //int t = rtp_tval2RTP(now);
-        transit = (rtp_now() - rtp_h->ts);
+        transit = rtp_st.delay_snc_last_SR;
         //printf("TRANSIT!: %i\n", transit); exit(1);
         delta = transit - rtp_st.transit;
         rtp_st.transit = transit;
         if (delta < 0) {
             delta = -delta;
         }
-        printf("now = %i ; rtp = %i ; delta = %i\n",
-               t, rtp_h->ts, delta);
+        //printf("now = %i ; rtp = %i ; delta = %i\n",
+        //       t, rtp_h->ts, delta);
         //rtp_st.jitter += delta - ((rtp_st.jitter + 8) >> 4);
         rtp_st.jitter += ((1.0/16.0) * ((double) delta - rtp_st.jitter));
 
         rtp_st.rtp_ts = rtp_h->ts;
-        rtp_stats_print();
-
-    }
-
-
-    rtp_st.rtp_received++;
+        //}
 
     /* print the new stats */
     rtp_stats_print();
@@ -356,7 +338,6 @@ void rtp_stats_update(struct rtp_header *rtp_h)
 
 void rtp_stats_print()
 {
-    return;
 
     printf(">> RTP Stats\n");
     printf("   First Sequence  : %u\n", rtp_st.first_seq);
@@ -366,8 +347,4 @@ void rtp_stats_print()
     printf("   RTP Timestamp   : %u\n", rtp_st.rtp_ts);
     printf("   Jitter          : %u\n", rtp_st.jitter);
     printf("   Last DLSR       : %i\n", rtp_st.last_dlsr);
-    printf("   Delta           : %ld.%ld\n",
-           rtp_st.ts_delta.tv_sec, rtp_st.ts_delta.tv_usec);
-    printf("   Received        : %ld\n", rtp_st.rtp_received);
 }
-

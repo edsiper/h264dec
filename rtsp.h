@@ -28,7 +28,7 @@ struct rtsp_session {
 };
 
 /* Last Sender Report timestamp (middle 32 bits) */
-uint32_t rtcp_last_sr_ts;
+//uint32_t rtcp_last_sr_ts;
 
 #define VERSION           "0.1"
 #define PROTOCOL_PREFIX   "rtsp://"
